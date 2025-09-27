@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dijkstra Shortest Path Visualizer (Image Upload)</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#121a33; --muted:#9fb0d5; --accent:#69e2ff; --good:#22c55e; --warn:#ffcc00; --danger:#ef4444; }
+    *{box-sizing:border-box}
+    body{margin:0;background:linear-gradient(180deg,#0b1020,#0a0f1c);color:#e6ecff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,'Helvetica Neue',sans-serif}
+    header{padding:18px 20px;border-bottom:1px solid #1f2a4d;background:#0c1326;position:sticky;top:0;z-index:10}
+    h1{font-size:20px;margin:0;font-weight:700;letter-spacing:.2px}
+    main{display:grid;grid-template-columns:360px 1fr;gap:16px;padding:16px;min-height:calc(100vh - 64px)}
+    @media (max-width: 980px){main{grid-template-columns:1fr}}
+    .panel{background:var(--panel);border:1px solid #1f2a4d;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    .controls{padding:14px}
+    .section{padding:12px;border-top:1px dashed #22305e}
+    .row{display:flex;align-items:center;gap:10px;margin:10px 0}
+    .row label{min-width:130px;color:var(--muted);font-size:13px}
+    input[type="range"]{width:100%}
+    input[type="file"]{width:100%}
+    .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    button{appearance:none;border:none;border-radius:14px;padding:10px 14px;background:#172044;color:#e6ecff;font-weight:600;cursor:pointer;transition:transform .08s ease, background .2s}
+    button:hover{background:#1b2855}
+    button:active{transform:translateY(1px)}
+    button.primary{background:linear-gradient(180deg,#3aa7ff,#2a80ff)}
+    button.success{background:linear-gradient(180deg,#2ecc71,#1db954)}
+    button.warn{background:linear-gradient(180deg,#ffd34a,#ffb703);color:#111}
+    button.danger{background:linear-gradient(180deg,#ff6b6b,#ef4444)}
+    .hint{font-size:12px;color:var(--muted);line-height:1.4}
+    .legend{display:flex;gap:8px;flex-wrap:wrap}
+    .legend div{display:flex;align-items:center;gap:6px;font-size:12px;color:#cdd9ff}
+    .swatch{width:16px;height:12px;border-radius:3px;border:1px solid rgba(255,255,255,.25)}
+    .canvas-wrap{position:relative;border-radius:16px;overflow:hidden}
+    #stage{display:block;width:100%;height:calc(100vh - 160px);background:#0a0f1c}
+    .toast{position:fixed;bottom:16px;left:16px;background:#14214a;color:#e6ecff;border:1px solid #233064;padding:10px 12px;border-radius:10px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🗺️ Dijkstra Shortest Path — Live Visualizer (Upload an Image)</h1>
+  </header>
+  <main>
+    <aside class="panel controls">
+      <div class="section" style="border-top:none">
+        <div class="row">
+          <label>Upload map/image</label>
+          <input id="file" type="file" accept="image/*" />
+        </div>
+        <p class="hint">Tip: Use a simple top-down map. Dark regions act like walls depending on the threshold.</p>
+      </div>
+
+      <div class="section">
+        <div class="row">
+          <label>Downscale (cell size)</label>
+          <input id="cellSize" type="range" min="2" max="20" step="1" value="6" />
+        </div>
+        <div class="row">
+          <label>Obstacle threshold</label>
+          <input id="threshold" type="range" min="0" max="255" step="1" value="90" />
+        </div>
+        <div class="row">
+          <label>Step speed</label>
+          <input id="speed" type="range" min="1" max="2000" step="1" value="500" />
+        </div>
+        <div class="hint">• Higher threshold → more pixels treated as walls (good for dark mazes).<br/>• Larger cell size → faster but lower resolution.</div>
+      </div>
+
+      <div class="section">
+        <div class="btns">
+          <button id="setStart" class="success">Set Start (click canvas)</button>
+          <button id="setEnd" class="warn">Set End (click canvas)</button>
+          <button id="run" class="primary">Run Dijkstra ▶</button>
+          <button id="pause">Pause ⏸</button>
+          <button id="reset" class="danger">Reset</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="legend">
+          <div><span class="swatch" style="background:#111"></span> Wall</div>
+          <div><span class="swatch" style="background:#4ade80"></span> Start</div>
+          <div><span class="swatch" style="background:#ffcc00"></span> End</div>
+          <div><span class="swatch" style="background:#2563eb"></span> Visited</div>
+          <div><span class="swatch" style="background:#f97316"></span> Frontier</div>
+          <div><span class="swatch" style="background:#e11d48"></span> Path</div>
+        </div>
+      </div>
+
+      <div class="section hint">
+        How it works:
+        <ul>
+          <li>We scale your image to a grid. Dark cells (below threshold) become obstacles.</li>
+          <li>Choose start/end by clicking on the canvas.</li>
+          <li>Hit “Run Dijkstra” to watch the algorithm explore and then draw the shortest path.</li>
+        </ul>
+      </div>
+    </aside>
+
+    <section class="panel canvas-wrap">
+      <canvas id="stage"></canvas>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" style="display:none"></div>
+
+  <script>
+    // ===== Utilities =====
+    const toast = (msg, ms=1600) => {
+      const el = document.getElementById('toast');
+      el.textContent = msg; el.style.display = 'block';
+      clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', ms);
+    };
+
+    const clamp = (v,min,max)=> Math.max(min, Math.min(max, v));
+
+    // Simple binary heap priority queue for Dijkstra
+    class MinHeap {
+      constructor(){ this.data=[]; }
+      _swap(i,j){ [this.data[i],this.data[j]]=[this.data[j],this.data[i]]; }
+      _parent(i){ return ((i-1)>>1); }
+      _left(i){ return (i<<1)+1; }
+      _right(i){ return (i<<1)+2; }
+      push(node){ this.data.push(node); this._siftUp(this.data.length-1); }
+      _siftUp(i){ while(i>0){ let p=this._parent(i); if(this.data[p].prio<=this.data[i].prio) break; this._swap(i,p); i=p; } }
+      pop(){ if(this.data.length===0) return null; const r=this.data[0]; const end=this.data.pop(); if(this.data.length){ this.data[0]=end; this._siftDown(0);} return r; }
+      _siftDown(i){ const n=this.data.length; while(true){ let l=this._left(i), r=this._right(i), s=i; if(l<n && this.data[l].prio < this.data[s].prio) s=l; if(r<n && this.data[r].prio < this.data[s].prio) s=r; if(s===i) break; this._swap(i,s); i=s; }
+      }
+      get size(){ return this.data.length; }
+      clear(){ this.data.length=0; }
+    }
+
+    // ===== Main App State =====
+    const fileInput = document.getElementById('file');
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+
+    const cellSizeEl = document.getElementById('cellSize');
+    const thresholdEl = document.getElementById('threshold');
+    const speedEl = document.getElementById('speed');
+
+    const setStartBtn = document.getElementById('setStart');
+    const setEndBtn = document.getElementById('setEnd');
+    const runBtn = document.getElementById('run');
+    const pauseBtn = document.getElementById('pause');
+    const resetBtn = document.getElementById('reset');
+
+    let img = new Image();
+    let imgLoaded = false;
+
+    let gridW=0, gridH=0, cellSize=parseInt(cellSizeEl.value,10);
+    let threshold = parseInt(thresholdEl.value,10);
+    let speed = parseInt(speedEl.value,10);
+
+    let grid = [];        // 0 = free, 1 = wall
+    let start = null;     // {x,y}
+    let end = null;       // {x,y}
+
+    // Dijkstra state
+    let heap = new MinHeap();
+    let dist = [];
+    let prev = [];
+    let visited = new Set();
+    let running = false;
+    let animHandle = null;
+    let finished = false;
+
+    function resizeCanvasToParent(){
+      const wrap = canvas.parentElement;
+      const w = wrap.clientWidth;
+      const h = wrap.clientHeight;
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+    window.addEventListener('resize', resizeCanvasToParent);
+
+    // Build grid from current image + settings
+    function buildGrid(){
+      if(!imgLoaded){ toast('Upload an image first'); return; }
+      cellSize = parseInt(cellSizeEl.value,10);
+      threshold = parseInt(thresholdEl.value,10);
+
+      // Compute grid size based on canvas-drawn image size
+      const maxW = canvas.width, maxH = canvas.height;
+      const scale = Math.min(maxW/img.width, maxH/img.height);
+      const drawW = Math.floor(img.width*scale);
+      const drawH = Math.floor(img.height*scale);
+      const offX = Math.floor((maxW - drawW)/2);
+      const offY = Math.floor((maxH - drawH)/2);
+
+      // Draw image to get pixels
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+      ctx.drawImage(img, offX, offY, drawW, drawH);
+      const imgData = ctx.getImageData(offX, offY, drawW, drawH).data;
+
+      gridW = Math.max(1, Math.floor(drawW / cellSize));
+      gridH = Math.max(1, Math.floor(drawH / cellSize));
+      grid = new Array(gridW*gridH).fill(0);
+
+      // For each cell, average brightness and threshold
+      for(let gy=0; gy<gridH; gy++){
+        for(let gx=0; gx<gridW; gx++){
+          // Sample a few pixels within the cell for speed
+          let x0 = Math.floor(gx*cellSize);
+          let y0 = Math.floor(gy*cellSize);
+          let x1 = Math.min(drawW-1, x0 + cellSize-1);
+          let y1 = Math.min(drawH-1, y0 + cellSize-1);
+
+          let sum=0, count=0;
+          for(let y=y0; y<=y1; y+=Math.max(1, Math.floor(cellSize/3))){
+            for(let x=x0; x<=x1; x+=Math.max(1, Math.floor(cellSize/3))){
+              const idx = (y*drawW + x)*4;
+              const r = imgData[idx], g = imgData[idx+1], b = imgData[idx+2];
+              const bright = (r*0.2126 + g*0.7152 + b*0.0722); // perceptual luma
+              sum += bright; count++;
+            }
+          }
+          const avg = sum / Math.max(1,count);
+          const isWall = avg < threshold ? 1 : 0;
+          grid[gy*gridW + gx] = isWall;
+        }
+      }
+
+      // Reset points if out of bounds
+      if(start && (start.x>=gridW||start.y>=gridH)) start = null;
+      if(end && (end.x>=gridW||end.y>=gridH)) end = null;
+
+      toast(`Grid built: ${gridW}×${gridH} cells`);
+      draw();
+    }
+
+    function draw(){
+      // Clear and redraw the background image letterboxed
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+      if(imgLoaded){
+        const scale = Math.min(canvas.width/img.width, canvas.height/img.height);
+        const drawW = Math.floor(img.width*scale);
+        const drawH = Math.floor(img.height*scale);
+        const offX = Math.floor((canvas.width - drawW)/2);
+        const offY = Math.floor((canvas.height - drawH)/2);
+        ctx.drawImage(img, offX, offY, drawW, drawH);
+
+        // Overlay grid visualization
+        if(gridW>0 && gridH>0){
+          const cellW = drawW / gridW, cellH = drawH / gridH;
+          ctx.save();
+          ctx.translate(offX, offY);
+          ctx.globalAlpha = 0.6;
+          for(let gy=0; gy<gridH; gy++){
+            for(let gx=0; gx<gridW; gx++){
+              const i = gy*gridW + gx;
+              if(grid[i]===1){
+                ctx.fillStyle = '#0b0b0b';
+                ctx.fillRect(gx*cellW, gy*cellH, cellW, cellH);
+              }
+            }
+          }
+          ctx.globalAlpha = 1.0;
+
+          // Draw visited/frontier
+          ctx.globalAlpha = 0.6;
+          if(dist.length){
+            // visited
+            ctx.fillStyle = '#2563eb';
+            visited.forEach(key=>{
+              const [x,y] = key.split(',').map(Number);
+              ctx.fillRect(x*cellW, y*cellH, cellW, cellH);
+            });
+            // frontier (approx: nodes in heap)
+            ctx.fillStyle = '#f97316';
+            for(const n of heap.data){
+              const {x,y}=n; ctx.fillRect(x*cellW, y*cellH, cellW, cellH);
+            }
+          }
+          ctx.globalAlpha = 1.0;
+
+          // Path if finished
+          if(finished && end){
+            ctx.fillStyle = '#e11d48';
+            let cur = `${end.x},${end.y}`;
+            while(cur && prev[cur]){
+              const [x,y] = cur.split(',').map(Number);
+              ctx.fillRect(x*cellW, y*cellH, cellW, cellH);
+              cur = prev[cur];
+            }
+          }
+
+          // Start/End markers
+          if(start){ ctx.fillStyle = '#4ade80'; ctx.fillRect(start.x*cellW, start.y*cellH, cellW, cellH); }
+          if(end){ ctx.fillStyle = '#ffcc00'; ctx.fillRect(end.x*cellW, end.y*cellH, cellW, cellH); }
+
+          ctx.restore();
+        }
+      } else {
+        // Placeholder grid background
+        ctx.fillStyle = '#0a0f1c';
+        ctx.fillRect(0,0,canvas.width, canvas.height);
+        ctx.fillStyle = '#9fb0d5';
+        ctx.font = '16px system-ui';
+        ctx.fillText('Upload an image to begin…', 20, 40);
+      }
+    }
+
+    // ===== Dijkstra Implementation =====
+    function neighbors(x,y){
+      // 4-neighborhood; change to 8 if desired
+      const nb = [ [1,0],[0,1],[-1,0],[0,-1] ];
+      const out = [];
+      for(const [dx,dy] of nb){
+        const nx=x+dx, ny=y+dy;
+        if(nx>=0&&ny>=0&&nx<gridW&&ny<gridH && grid[ny*gridW+nx]===0){ out.push({x:nx,y:ny}); }
+      }
+      return out;
+    }
+
+    function startDijkstra(){
+      if(!start || !end){ toast('Pick START and END first'); return; }
+      dist = new Array(gridW*gridH).fill(Infinity);
+      prev = {}; visited.clear(); heap.clear(); finished=false;
+
+      const idx = (p)=> p.y*gridW + p.x;
+      const key = (p)=> `${p.x},${p.y}`;
+
+      dist[idx(start)] = 0;
+      heap.push({x:start.x,y:start.y, prio:0});
+      running = true; step();
+    }
+
+    function step(){
+      if(!running){ draw(); return; }
+      const opsPerFrame = clamp(parseInt(speedEl.value,10), 1, 5000);
+
+      const idx = (p)=> p.y*gridW + p.x;
+      const key = (p)=> `${p.x},${p.y}`;
+
+      let ops=0;
+      while(ops < opsPerFrame && heap.size){
+        ops++;
+        const cur = heap.pop();
+        const ck = key(cur);
+        if(visited.has(ck)) continue;
+        visited.add(ck);
+
+        if(cur.x===end.x && cur.y===end.y){
+          finished = true; running=false; draw(); toast('Path found ✔'); return;
+        }
+
+        for(const nb of neighbors(cur.x, cur.y)){
+          const alt = dist[idx(cur)] + 1; // cost 1 per move
+          if(alt < dist[idx(nb)]){
+            dist[idx(nb)] = alt;
+            prev[key(nb)] = ck;
+            heap.push({x:nb.x, y:nb.y, prio:alt});
+          }
+        }
+      }
+      draw();
+      animHandle = requestAnimationFrame(step);
+    }
+
+    function pause(){ running=false; if(animHandle) cancelAnimationFrame(animHandle); draw(); }
+    function reset(){ pause(); visited.clear(); heap.clear(); dist=[]; prev={}; finished=false; draw(); }
+
+    // ===== Events =====
+    fileInput.addEventListener('change', (e)=>{
+      const f = e.target.files?.[0];
+      if(!f) return;
+      const url = URL.createObjectURL(f);
+      img.onload = ()=>{ imgLoaded=true; resizeCanvasToParent(); buildGrid(); toast('Image loaded'); };
+      img.src = url;
+    });
+
+    cellSizeEl.addEventListener('input', ()=>{ buildGrid(); });
+    thresholdEl.addEventListener('input', ()=>{ buildGrid(); });
+    speedEl.addEventListener('input', ()=>{ /* live speed change */ });
+
+    let picking = null; // 'start' | 'end' | null
+    setStartBtn.addEventListener('click', ()=>{ picking='start'; toast('Click on the canvas to set START'); });
+    setEndBtn.addEventListener('click', ()=>{ picking='end'; toast('Click on the canvas to set END'); });
+
+    canvas.addEventListener('click', (e)=>{
+      if(!imgLoaded || !gridW) return;
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+
+      // Convert canvas px → grid cell
+      const scale = Math.min(canvas.width/img.width, canvas.height/img.height);
+      const drawW = Math.floor(img.width*scale);
+      const drawH = Math.floor(img.height*scale);
+      const offX = Math.floor((canvas.width - drawW)/2);
+      const offY = Math.floor((canvas.height - drawH)/2);
+
+      if(cx<offX || cy<offY || cx>offX+drawW || cy>offY+drawH){ return; }
+      const cellW = drawW / gridW, cellH = drawH / gridH;
+      const gx = Math.floor((cx - offX) / cellW);
+      const gy = Math.floor((cy - offY) / cellH);
+      if(grid[gy*gridW+gx]===1){ toast('That cell is a wall. Pick a free cell.'); return; }
+
+      if(picking==='start'){ start = {x:gx,y:gy}; picking=null; reset(); toast(`Start set to (${gx}, ${gy})`); }
+      else if(picking==='end'){ end = {x:gx,y:gy}; picking=null; reset(); toast(`End set to (${gx}, ${gy})`); }
+      draw();
+    });
+
+    runBtn.addEventListener('click', ()=>{ if(!imgLoaded){ toast('Upload an image first'); return;} buildGrid(); startDijkstra(); });
+    pauseBtn.addEventListener('click', ()=> pause());
+    resetBtn.addEventListener('click', ()=> reset());
+
+    // Initial layout
+    resizeCanvasToParent();
+    draw();
+  </script>
+</body>
+</html>
